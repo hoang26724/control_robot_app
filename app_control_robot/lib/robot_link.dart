@@ -73,8 +73,11 @@ class RobotLink extends ChangeNotifier {
 
   bool get isConnected => _state == RobotLinkState.connected;
 
-  /// The command currently being held, or null when the robot is stopped. The
-  /// D-pad uses this to light up the pressed direction.
+  /// The command currently being held, or null when the robot is stopped.
+  ///
+  /// The on-screen buttons highlight themselves from their own press state, so
+  /// nothing in the UI has to read this; it is kept as the link's own answer to
+  /// "what is the robot being told to do right now".
   String? get activeCommand => _heldCommand;
 
   String? get deviceName => _deviceName;

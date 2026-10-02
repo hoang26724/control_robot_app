@@ -43,6 +43,10 @@ class ControlPage extends StatefulWidget {
 }
 
 class _ControlPageState extends State<ControlPage> with WidgetsBindingObserver {
+  /// Fixed size of the control pad, scaled to fit whatever the screen gives us.
+  static const double _dialWidth = 300;
+  static const double _dialHeight = 216;
+
   late final RobotLink _link = widget.link ?? RobotLink(MethodChannelTransport());
 
   /// Only dispose a link this page created. An injected one belongs to whoever
@@ -141,38 +145,64 @@ class _ControlPageState extends State<ControlPage> with WidgetsBindingObserver {
             ),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    GamepadDpad(
-                      enabled: connected,
-                      activeCommand: _link.activeCommand,
-                      onPressed: _press,
-                      onReleased: _release,
-                    ),
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                // A fixed canvas scaled down to fit. The pad keeps its shape
+                // and its touch targets stay predictable on any screen, instead
+                // of reflowing into something thumb-unfriendly on a short one.
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: SizedBox(
+                    width: _dialWidth,
+                    height: _dialHeight,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        // Always live: a stop that needs a connection is not a
-                        // safety net.
-                        GamepadActionButton(
-                          label: 'STOP',
-                          icon: Icons.stop,
-                          color: theme.colorScheme.error,
-                          onPressed: _release,
+                        // Left thumb: pivot on the spot.
+                        _DirectionCluster(
+                          enabled: connected,
+                          onPressed: _press,
+                          onReleased: _release,
+                          buttons: const [
+                            (command: 'L', label: 'Trái', icon: Icons.turn_left),
+                            (command: 'R', label: 'Phải', icon: Icons.turn_right),
+                          ],
                         ),
-                        const SizedBox(height: 28),
-                        GamepadActionButton(
-                          label: 'BT',
-                          icon: Icons.bluetooth,
-                          color: theme.colorScheme.tertiary,
-                          onPressed: _openDevicePicker,
+                        // Centre: stop and link. Kept between the two thumb
+                        // zones so neither hand can cover it.
+                        Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            // Always live: a stop that needs a connection is
+                            // not a safety net.
+                            GamepadActionButton(
+                              label: 'STOP',
+                              icon: Icons.stop,
+                              color: theme.colorScheme.error,
+                              onPressed: _release,
+                            ),
+                            const SizedBox(height: 24),
+                            GamepadActionButton(
+                              label: 'BT',
+                              icon: Icons.bluetooth,
+                              color: theme.colorScheme.tertiary,
+                              onPressed: _openDevicePicker,
+                            ),
+                          ],
+                        ),
+                        // Right thumb: drive.
+                        _DirectionCluster(
+                          enabled: connected,
+                          onPressed: _press,
+                          onReleased: _release,
+                          buttons: const [
+                            (command: 'F', label: 'Tiến', icon: Icons.keyboard_arrow_up),
+                            (command: 'B', label: 'Lùi', icon: Icons.keyboard_arrow_down),
+                          ],
                         ),
                       ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -187,6 +217,46 @@ class _ControlPageState extends State<ControlPage> with WidgetsBindingObserver {
       return 'Đang nối...';
     }
     return _link.isConnected ? 'Đã nối' : 'Chưa nối';
+  }
+}
+
+/// One thumb zone: two stacked [DirectionButton]s.
+///
+/// Used twice on the pad, so the pairs stay visually identical and the caller
+/// only decides *which* two commands go here.
+class _DirectionCluster extends StatelessWidget {
+  const _DirectionCluster({
+    required this.enabled,
+    required this.onPressed,
+    required this.onReleased,
+    required this.buttons,
+  });
+
+  final bool enabled;
+  final ValueChanged<String> onPressed;
+  final VoidCallback onReleased;
+
+  /// Command, label and icon for each button, top to bottom.
+  final List<({String command, String label, IconData icon})> buttons;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < buttons.length; i++) ...[
+          if (i > 0) const SizedBox(height: 12),
+          DirectionButton(
+            command: buttons[i].command,
+            label: buttons[i].label,
+            icon: buttons[i].icon,
+            enabled: enabled,
+            onPressed: onPressed,
+            onReleased: onReleased,
+          ),
+        ],
+      ],
+    );
   }
 }
 

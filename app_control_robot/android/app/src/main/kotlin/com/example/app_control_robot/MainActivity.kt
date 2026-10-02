@@ -2,6 +2,7 @@ package com.example.app_control_robot
 
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.Intent
@@ -21,6 +22,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.IOException
 import java.io.InputStream
 import java.util.UUID
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -52,6 +54,18 @@ class MainActivity : FlutterActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val session = AtomicInteger(0)
 
+    /**
+     * Socket writes are pushed here instead of running inline.
+     *
+     * A MethodChannel call arrives on the platform thread, but writing to an
+     * RFCOMM socket blocks for as long as the radio takes to drain it. A held
+     * command is resent every 200 ms, so doing that inline would stall the
+     * platform thread several times a second and eventually trip an ANR.
+     * Single-threaded on purpose: it keeps a command and its keep-alives in
+     * the order they were sent.
+     */
+    private val writer = Executors.newSingleThreadExecutor()
+
     private var events: EventChannel.EventSink? = null
 
     @Volatile
@@ -61,8 +75,31 @@ class MainActivity : FlutterActivity() {
     /** Resumes the method call that asked for a runtime permission. */
     private var pendingPermission: ((Boolean) -> Unit)? = null
 
+    /**
+     * The local adapter, or null when Bluetooth is unusable.
+     *
+     * `Context.BLUETOOTH_SERVICE` is a [BluetoothManager], *not* a
+     * [BluetoothAdapter]. Casting it straight to [BluetoothAdapter] always
+     * fails, so the `as?` silently yields null and every call reports
+     * "this device has no Bluetooth" even on a phone that plainly has one.
+     * The adapter comes out of the manager instead.
+     *
+     * `getAdapter()` itself is permission-guarded, so a refusal surfaces as an
+     * exception rather than as null; [withReadyBluetooth] folds both into one
+     * answer.
+     */
     private val adapter: BluetoothAdapter?
-        get() = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothAdapter
+        get() = runCatching {
+            (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+        }.getOrNull()
+
+    /**
+     * Whether this phone has Bluetooth hardware at all. Used to tell a genuine
+     * permission problem apart from a device that really cannot do Bluetooth,
+     * because both arrive here as a null adapter.
+     */
+    private val hasBluetoothHardware: Boolean
+        get() = packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH)
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -113,7 +150,16 @@ class MainActivity : FlutterActivity() {
     ) {
         val a = adapter
         if (a == null) {
-            result.error("no_adapter", "Máy này không có Bluetooth.", null)
+            result.error(
+                "no_adapter",
+                if (hasBluetoothHardware) {
+                    "Không mở được Bluetooth. Cấp quyền \"Thiết bị gần đó\" cho " +
+                        "ứng dụng trong Cài đặt rồi thử lại."
+                } else {
+                    "Máy này không có Bluetooth."
+                },
+                null
+            )
             return
         }
         if (!hasPermissions()) {
@@ -172,12 +218,15 @@ class MainActivity : FlutterActivity() {
      * Android 12 split Bluetooth into runtime permissions. Older releases only
      * need a location grant, and only to read the bond list at all — Bluetooth
      * itself is a normal install-time permission there.
+     *
+     * On 31+ only `BLUETOOTH_CONNECT` is asked for: reading bonded devices and
+     * opening a socket to one is "communicating with already-paired devices",
+     * which needs CONNECT alone. `BLUETOOTH_SCAN` is deliberately not requested
+     * because this app never scans, and requiring it would let a single refusal
+     * wedge the whole app with no way for the user to recover.
      */
     private fun requiredPermissions(): Array<String> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        arrayOf(
-            android.Manifest.permission.BLUETOOTH_CONNECT,
-            android.Manifest.permission.BLUETOOTH_SCAN
-        )
+        arrayOf(android.Manifest.permission.BLUETOOTH_CONNECT)
     } else {
         arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION)
     }
@@ -251,7 +300,11 @@ class MainActivity : FlutterActivity() {
         Thread {
             var opened: BluetoothSocket? = null
             try {
-                a.cancelDiscovery()
+                // Discovery must be off before connecting or the RFCOMM
+                // handshake can time out. It is scan-gated on Android 12+, and
+                // this app never holds BLUETOOTH_SCAN, so a refusal here is
+                // expected and harmless.
+                runCatching { a.cancelDiscovery() }
                 opened = a.getRemoteDevice(address).createRfcommSocketToServiceRecord(SPP_UUID)
                 opened.connect()
 
@@ -293,18 +346,38 @@ class MainActivity : FlutterActivity() {
             return
         }
         val open = socket
-        if (open == null || !open.isConnected) {
+        if (open == null) {
             result.error("not_connected", "Chưa nối robot.", null)
             return
         }
-        try {
-            // A command is two bytes, so writing it inline is cheap enough.
-            open.outputStream.write(data.toByteArray(Charsets.UTF_8))
-            open.outputStream.flush()
-            result.success(null)
-        } catch (error: IOException) {
-            result.error("write_failed", error.message, null)
-            emitLinkLost("Mất kết nối Bluetooth.")
+
+        // Captured before queueing: closeSession() bumps the session, so a write
+        // that fails because the user asked to disconnect stays quiet.
+        val id = session.get()
+        val bytes = data.toByteArray(Charsets.UTF_8)
+
+        // A command is two bytes, but the write still waits on the radio, so it
+        // must not sit on the platform thread. See [writer].
+        val queued = runCatching {
+            writer.execute {
+                try {
+                    open.outputStream.write(bytes)
+                    open.outputStream.flush()
+                    mainHandler.post { result.success(null) }
+                } catch (error: IOException) {
+                    mainHandler.post { result.error("write_failed", error.message, null) }
+                    if (id == session.get()) {
+                        mainHandler.post { emitLinkLost("Mất kết nối Bluetooth.") }
+                    }
+                }
+            }
+        }
+
+        if (queued.isFailure) {
+            // The executor is already shut down, which only happens while the
+            // activity is going away. Answer anyway: a MethodChannel.Result left
+            // unanswered hangs the Dart future forever.
+            result.error("write_failed", "Ứng dụng đang đóng lại.", null)
         }
     }
 
@@ -368,6 +441,7 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         pendingPermission = null
         closeSession()
+        writer.shutdownNow()
         super.onDestroy()
     }
 }

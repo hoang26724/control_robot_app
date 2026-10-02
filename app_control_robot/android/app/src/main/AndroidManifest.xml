@@ -10,8 +10,10 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <!-- The app only reads bonded devices, never scans, so it never derives
-         location from Bluetooth. -->
+    <!-- Declared but never requested at runtime: the app does not scan, so it
+         must not put up a scan consent prompt, and it must not derive location
+         from Bluetooth. Still needed on Android 12+ because
+         BluetoothAdapter.cancelDiscovery() is itself scan-gated. -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="s" />

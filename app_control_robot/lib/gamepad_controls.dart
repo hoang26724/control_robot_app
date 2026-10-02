@@ -1,11 +1,9 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'robot_link.dart';
 
-/// One arm of a console D-pad.
+/// One hold-to-move direction button.
 ///
 /// [onPressed] fires as soon as the finger lands. [onReleased] fires when it
 /// lifts, drags off, or the gesture is otherwise cancelled — every one of those
@@ -14,39 +12,38 @@ import 'robot_link.dart';
 /// Uses [Listener] rather than [InkWell] because pointer-up is delivered even
 /// when the finger moves off the button. That is the behavior we want here. Do
 /// not "simplify" this to an [InkWell] or a gesture recognizer.
-class DpadArrow extends StatefulWidget {
-  const DpadArrow({
+class DirectionButton extends StatefulWidget {
+  const DirectionButton({
     required this.command,
+    required this.label,
     required this.icon,
-    required this.turns,
     required this.enabled,
     required this.onPressed,
     required this.onReleased,
-    this.size = 84,
+    this.size = 100,
     super.key,
   });
 
-  /// The single ASCII command this arm sends: `F`, `B`, `L` or `R`.
+  /// The single ASCII command this button sends: `F`, `B`, `L` or `R`.
   final String command;
 
+  /// Vietnamese name shown under the icon, e.g. `Tiến`.
+  final String label;
+
   final IconData icon;
-
-  /// Clockwise quarter-turns applied to an up-pointing triangle. 0 = up,
-  /// 1 = right, 2 = down, 3 = left.
-  final int turns;
-
-  /// Side of the square this arm occupies, before rotation.
-  final double size;
 
   final bool enabled;
   final ValueChanged<String> onPressed;
   final VoidCallback onReleased;
 
+  /// Width and height of the button.
+  final double size;
+
   @override
-  State<DpadArrow> createState() => _DpadArrowState();
+  State<DirectionButton> createState() => _DirectionButtonState();
 }
 
-class _DpadArrowState extends State<DpadArrow> {
+class _DirectionButtonState extends State<DirectionButton> {
   bool _pressed = false;
 
   void _start() {
@@ -75,153 +72,41 @@ class _DpadArrowState extends State<DpadArrow> {
         : active
             ? scheme.primary
             : scheme.surfaceContainerHigh;
+    final foreground = !widget.enabled
+        ? scheme.onSurfaceVariant
+        : active
+            ? scheme.onPrimary
+            : scheme.onSurface;
 
     return Listener(
       behavior: HitTestBehavior.opaque,
       onPointerDown: widget.enabled ? (_) => _start() : null,
       onPointerUp: widget.enabled ? (_) => _end() : null,
       onPointerCancel: widget.enabled ? (_) => _end() : null,
-      child: Transform.rotate(
-        angle: widget.turns * math.pi / 2,
-        child: ClipPath(
-          clipper: const _UpTriangleClipper(),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 80),
-            width: widget.size,
-            height: widget.size,
-            color: fill,
-            child: Icon(
-              widget.icon,
-              // Counter-rotate so the glyph is not printed sideways.
-              size: widget.size * 0.5,
-              color: widget.enabled
-                  ? (active ? scheme.onPrimary : scheme.onSurface)
-                  : scheme.onSurfaceVariant,
-            ),
-          ),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 80),
+        width: widget.size,
+        height: widget.size,
+        decoration: BoxDecoration(
+          color: fill,
+          borderRadius: BorderRadius.circular(widget.size * 0.26),
         ),
-      ),
-    );
-  }
-}
-
-class _UpTriangleClipper extends CustomClipper<Path> {
-  const _UpTriangleClipper();
-
-  @override
-  Path getClip(Size size) => Path()
-    ..moveTo(size.width / 2, 0)
-    ..lineTo(size.width, size.height)
-    ..lineTo(0, size.height)
-    ..close();
-
-  @override
-  bool shouldReclip(_UpTriangleClipper oldClipper) => false;
-}
-
-/// The four [DpadArrow]s plus the hub, laid out as one console cross.
-///
-/// The arms are pulled towards the middle with [Transform.translate] so they
-/// share a single hub, the way a real D-pad is moulded. Transforms move the
-/// paint *and* the hit-test region but not the layout box, so the cross stays
-/// centred in a square and the overlap costs no extra space in the flow —
-/// unlike negative padding, which Flutter rejects outright.
-class GamepadDpad extends StatelessWidget {
-  const GamepadDpad({
-    required this.enabled,
-    required this.activeCommand,
-    required this.onPressed,
-    required this.onReleased,
-    this.size = 84,
-    super.key,
-  });
-
-  final bool enabled;
-
-  /// Command currently held, or null. Lights the matching arm and the hub.
-  final String? activeCommand;
-
-  final ValueChanged<String> onPressed;
-  final VoidCallback onReleased;
-
-  /// Side of one arm's square.
-  final double size;
-
-  static const double overlap = 14;
-  static const double hubSize = 54;
-
-  @override
-  Widget build(BuildContext context) {
-    Widget arm(String command, IconData icon, int turns, Offset pull) =>
-        Transform.translate(
-          offset: pull,
-          child: DpadArrow(
-            command: command,
-            icon: icon,
-            turns: turns,
-            enabled: enabled,
-            onPressed: onPressed,
-            onReleased: onReleased,
-            size: size,
-          ),
-        );
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        arm('F', Icons.keyboard_arrow_up, 0, const Offset(0, overlap)),
-        Row(
-          mainAxisSize: MainAxisSize.min,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            arm('L', Icons.turn_left, 3, const Offset(overlap, 0)),
-            _Hub(size: hubSize, activeCommand: activeCommand),
-            arm('R', Icons.turn_right, 1, const Offset(-overlap, 0)),
+            Icon(widget.icon, size: widget.size * 0.42, color: foreground),
+            const SizedBox(height: 2),
+            Text(
+              widget.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: foreground,
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
           ],
         ),
-        arm('B', Icons.keyboard_arrow_down, 2, const Offset(0, -overlap)),
-      ],
-    );
-  }
-}
-
-/// Centre of the D-pad: shows which direction the robot is being told to go.
-class _Hub extends StatelessWidget {
-  const _Hub({required this.size, required this.activeCommand});
-
-  final double size;
-  final String? activeCommand;
-
-  static const Map<String, IconData> _icons = {
-    'F': Icons.keyboard_arrow_up,
-    'B': Icons.keyboard_arrow_down,
-    'L': Icons.turn_left,
-    'R': Icons.turn_right,
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final icon = activeCommand == null ? null : _icons[activeCommand];
-
-    return SizedBox(
-      width: size,
-      height: size,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: icon == null
-              ? scheme.surface
-              : scheme.primaryContainer,
-        ),
-        child: icon == null
-            ? Center(
-                child: Icon(
-                  Icons.bluetooth_connected,
-                  size: size * 0.4,
-                  color: scheme.onSurfaceVariant,
-                ),
-              )
-            : Icon(icon, size: size * 0.55, color: scheme.onPrimaryContainer),
       ),
     );
   }
@@ -248,6 +133,11 @@ class GamepadActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // Derived from the fill rather than hardcoded to onError, so a button of
+    // any colour (STOP is the error colour, BT is not) gets a label that stays
+    // readable on top of it.
+    final foreground = theme.colorScheme.contrastOn(color);
+
     return Semantics(
       button: true,
       label: label,
@@ -266,11 +156,11 @@ class GamepadActionButton extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 if (icon != null)
-                  Icon(icon, size: size * 0.34, color: theme.colorScheme.onError),
+                  Icon(icon, size: size * 0.34, color: foreground),
                 Text(
                   label,
                   style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.onError,
+                    color: foreground,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 1,
                   ),
@@ -282,6 +172,13 @@ class GamepadActionButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Picks black or white text for [fill] so a label always stays legible,
+/// whatever colour the caller picked.
+extension on ColorScheme {
+  Color contrastOn(Color fill) =>
+      fill.computeLuminance() > 0.5 ? Colors.black87 : Colors.white;
 }
 
 /// Status LED: green while connected, amber while connecting, red otherwise.

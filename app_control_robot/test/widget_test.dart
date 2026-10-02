@@ -9,9 +9,10 @@ import 'robot_link_test.dart' show FakeTransport;
 
 const robot = BluetoothDevice(address: 'AA:BB:CC:DD:EE:FF', name: 'ESP32_ROBOT');
 
-DpadArrow _arrowFor(WidgetTester tester, String command) => tester.widget(
+DirectionButton _arrowFor(WidgetTester tester, String command) =>
+    tester.widget(
       find.byWidgetPredicate(
-        (widget) => widget is DpadArrow && widget.command == command,
+        (widget) => widget is DirectionButton && widget.command == command,
       ),
     );
 
@@ -33,15 +34,43 @@ void main() {
     await transport.close();
   });
 
-  testWidgets('the D-pad carries all four directions plus STOP', (tester) async {
+  testWidgets('the pad carries all four directions plus STOP', (tester) async {
     await _pump(tester, link);
 
     for (final command in ['F', 'B', 'L', 'R']) {
       expect(find.byWidgetPredicate(
-        (widget) => widget is DpadArrow && widget.command == command,
+        (widget) => widget is DirectionButton && widget.command == command,
       ), findsOneWidget, reason: command);
     }
     expect(find.widgetWithText(GamepadActionButton, 'STOP'), findsOneWidget);
+  });
+
+  testWidgets('turning sits left of the screen and driving sits right',
+      (tester) async {
+    await _pump(tester, link);
+
+    double centreOf(String command) =>
+        tester.getCenter(find.byWidgetPredicate(
+          (widget) => widget is DirectionButton && widget.command == command,
+        )).dx;
+    double centreOfWidget(Finder finder) => tester.getCenter(finder).dx;
+
+    final left = centreOf('L');
+    final right = centreOf('R');
+    final forward = centreOf('F');
+    final backward = centreOf('B');
+    final stop = centreOfWidget(find.widgetWithText(GamepadActionButton, 'STOP'));
+    final bt = centreOfWidget(find.widgetWithText(GamepadActionButton, 'BT'));
+    final screen = tester.getSize(find.byType(ControlPage)).width / 2;
+
+    // Pivot pair left of centre, drive pair right of it, with both action
+    // buttons stranded in the middle so neither thumb can cover them.
+    expect(left, lessThan(screen));
+    expect(right, lessThan(screen));
+    expect(forward, greaterThan(screen));
+    expect(backward, greaterThan(screen));
+    expect(stop, closeTo(screen, 24));
+    expect(bt, closeTo(screen, 24));
   });
 
   testWidgets('movement is disabled until connected, STOP stays live',
@@ -64,7 +93,7 @@ void main() {
     await _pump(tester, link);
 
     final forward = find.byWidgetPredicate(
-      (widget) => widget is DpadArrow && widget.command == 'F',
+      (widget) => widget is DirectionButton && widget.command == 'F',
     );
     final gesture = await tester.startGesture(tester.getCenter(forward));
     await tester.pump();
@@ -84,7 +113,7 @@ void main() {
     await _pump(tester, link);
 
     final left = find.byWidgetPredicate(
-      (widget) => widget is DpadArrow && widget.command == 'L',
+      (widget) => widget is DirectionButton && widget.command == 'L',
     );
     final gesture = await tester.startGesture(tester.getCenter(left));
     await tester.pump();
@@ -101,7 +130,7 @@ void main() {
     await _pump(tester, link);
 
     final forward = find.byWidgetPredicate(
-      (widget) => widget is DpadArrow && widget.command == 'F',
+      (widget) => widget is DirectionButton && widget.command == 'F',
     );
     await tester.tap(forward);
     await tester.pump();
@@ -121,7 +150,7 @@ void main() {
     );
   });
 
-  testWidgets('connecting shows the robot and enables the D-pad', (tester) async {
+  testWidgets('connecting shows the robot and enables the pad', (tester) async {
     await link.connect(robot);
     await _pump(tester, link);
 
@@ -171,7 +200,7 @@ void main() {
     expect(find.text('ESP32_ROBOT'), findsOneWidget);
   });
 
-  testWidgets('an unreachable robot leaves the D-pad locked', (tester) async {
+  testWidgets('an unreachable robot leaves the pad locked', (tester) async {
     transport.connectError = const BluetoothUnavailable('Robot không phản hồi.');
     transport.paired = [robot];
     await _pump(tester, link);
